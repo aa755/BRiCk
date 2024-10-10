@@ -1,10 +1,10 @@
 (coq.theory
  (name Lens.Elpi)
- (theories Lens elpi elpi.apps.derive)
+ (theories Lens elpi elpi.apps.derive elpi_elpi)
  (package coq-lens-elpi))
 
 ; Hack to ensure the coq-elpi package is avalable. *)
-(rule
- (targets dummy.v)
- (deps (package coq-elpi))
- (action (with-stdout-to %{targets} (echo "(* dummy file *)"))))
+;(rule
+; (targets elpi-elpi/dummy.v)
+; (deps (package coq-elpi))
+; (action (with-stdout-to %{targets} (echo "(* dummy file *)"))))
