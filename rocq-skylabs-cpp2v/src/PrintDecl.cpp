@@ -340,10 +340,13 @@ static fmt::Formatter &printClassName(CoqPrinter &print, QualType type,
     return printClassName(print, type.getTypePtrOrNull(), cprint, loc);
 }
 
-static fmt::Formatter &printLayoutInfo(CoqPrinter &print,
-                                       CharUnits::QuantityType li) {
+/// Print a [LayoutInfo]. Its offset is measured in *bits* (see the comment on
+/// [LayoutInfo] in [lang/cpp/syntax/decl.v]); callers must convert. Note that
+/// clang reports field offsets in bits ([getFieldOffset]) but base-class
+/// offsets in [CharUnits] ([getBaseClassOffset]).
+static fmt::Formatter &printLayoutInfo(CoqPrinter &print, uint64_t bit_offset) {
     guard::ctor _(print, "Build_LayoutInfo");
-    return print.output() << li;
+    return print.output() << bit_offset;
 }
 
 static const RecordDecl *getTypeAsRecord(const ValueDecl &decl) {
@@ -477,8 +480,9 @@ static fmt::Formatter &printStructBases(const CXXRecordDecl &decl,
         guard::ctor _(print, "mkBase");
         if (auto record = type->getAsCXXRecordDecl()) {
             cprint.printName(print, record, loc::of(type)) << fmt::nbsp;
-            auto li =
-                layout ? layout->getBaseClassOffset(record).getQuantity() : 0;
+            auto li = layout ? cprint.getContext().toBits(
+                                   layout->getBaseClassOffset(record))
+                             : 0;
             return printLayoutInfo(print, li);
         } else {
             {
@@ -704,6 +708,28 @@ static const char *supportedRecord(const RecordDecl &decl,
         if (f->isInvalidDecl())
             return "invalid field";
     }
+    if (!decl.isCompleteDefinition() || decl.isDependentContext())
+        return nullptr;
+
+    // BRiCk's typed object pointers imply natural type alignment. A packed
+    // field needs a different access contract, which is not modeled yet.
+    // Check the layout rather than the attribute: byte-only packed records
+    // and explicitly aligned packed fields can still be represented.
+    const auto &layout = ctxt.getASTRecordLayout(&decl);
+    const auto recordAlign = ctxt.toBits(layout.getAlignment());
+    unsigned index = 0;
+    for (auto f : decl.fields()) {
+        // Typedef alignment attributes are erased by the type translation.
+        // Reference members are pointer-sized cells, not their referents.
+        const auto ty = f->getType()->isReferenceType()
+                            ? ctxt.VoidPtrTy
+                            : f->getType().getCanonicalType();
+        const auto fieldAlign = ctxt.getTypeAlign(ty);
+        if (recordAlign % fieldAlign != 0 ||
+            layout.getFieldOffset(index) % fieldAlign != 0)
+            return "under-aligned fields are not supported";
+        ++index;
+    }
     return nullptr;
 }
 static const char *supportedRecord(const CXXRecordDecl &decl,
@@ -712,7 +738,22 @@ static const char *supportedRecord(const CXXRecordDecl &decl,
         if (base.isVirtual())
             return "virtual base classes are not supported";
     }
-    return supportedRecord(static_cast<const RecordDecl &>(decl), ctxt);
+    if (auto msg = supportedRecord(static_cast<const RecordDecl &>(decl), ctxt))
+        return msg;
+    if (!decl.isCompleteDefinition() || decl.isDependentContext())
+        return nullptr;
+
+    const auto &layout = ctxt.getASTRecordLayout(&decl);
+    const auto recordAlign = ctxt.toBits(layout.getAlignment());
+    for (auto base : decl.bases()) {
+        const auto baseAlign =
+            ctxt.getTypeAlign(base.getType().getCanonicalType());
+        const auto offset = ctxt.toBits(
+            layout.getBaseClassOffset(base.getType()->getAsCXXRecordDecl()));
+        if (recordAlign % baseAlign != 0 || offset % baseAlign != 0)
+            return "under-aligned base classes are not supported";
+    }
+    return nullptr;
 }
 
 } // namespace

@@ -110,6 +110,13 @@ public:
     void Visit(const Decl *d, Flags flags) {
         if (visited_.find(d->getID()) == visited_.end()) {
             visited_.insert(d->getID());
+            // Declarations in the scope of template parameters are patterns,
+            // also when they are reached outside of their template, e.g.
+            // through the out-of-line definition of a member of a class
+            // template. [TemplateDecl]s set the flag for their own patterns
+            // and not for their specializations.
+            if (not isa<TemplateDecl>(d) and d->isTemplated())
+                flags = flags.set_template();
             Visitor::Visit(d, flags);
         }
     }
@@ -155,6 +162,11 @@ public:
         for (auto i : decl->decls()) {
             this->Visit(i, flags);
         }
+
+        // Clang creates std::align_val_t for its implicit aligned allocation
+        // functions, but does not add the EnumDecl to a declaration context.
+        if (auto align_val_t = sema_->getStdAlignValT())
+            Visit(align_val_t->getCanonicalDecl(), flags);
     }
 
     void VisitTypeDecl(const TypeDecl *type, Flags) {

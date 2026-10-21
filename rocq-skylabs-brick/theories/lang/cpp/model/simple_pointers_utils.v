@@ -46,6 +46,7 @@ Module canonical_tu.
   Record genv_canon : Set := Build_genv_canon
   { genv_tu : translation_unit_canon
     (* ^ the [translation_unit] *)
+  ; member_pointer_bitsize : bitsize
   }.
   #[global] Instance genv_canon_eq_dec : EqDecision genv_canon.
   Proof. solve_decision. Qed.
@@ -53,7 +54,7 @@ Module canonical_tu.
   Definition tu_to_canon (tu : translation_unit) : translation_unit_canon.
     (* let '(makeTranslationUnit s g _ init info) := tu in Build_translation_unit_canon (im_to_gmap s) (im_to_gmap g) info. *) Admitted. (* TODO: structured names keys *)
   #[local] Definition genv_to_canon σ : genv_canon :=
-    let '(Build_genv tu) := σ in Build_genv_canon (tu_to_canon tu).
+    let '(Build_genv tu sz) := σ in Build_genv_canon (tu_to_canon tu) sz.
 End canonical_tu.
 
 Definition null_alloc_id : alloc_id := MkAllocId 0.
@@ -90,7 +91,11 @@ Lemma global_ptr_encode_vaddr_nonnull o va : va = global_ptr_encode_vaddr o -> v
 Proof. (* by move->. Qed. *) Admitted. (* ?? *)
 
 Lemma global_ptr_encode_aid_nonnull o aid : aid = global_ptr_encode_aid o -> aid <> null_alloc_id.
-Proof. (* by move->. Qed. *) Admitted. (* ?? *)
+Proof.
+  intros -> H.
+  apply (global_ptr_encode_vaddr_nonnull o _ eq_refl).
+  by injection H.
+Qed.
 
 (*
 A slightly better model might be something like the following, but we don't

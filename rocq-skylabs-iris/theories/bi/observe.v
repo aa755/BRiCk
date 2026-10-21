@@ -7,6 +7,7 @@ Require Import elpi.apps.locker.locker.
 Require Import skylabs.iris.extra.bi.prelude.
 Require Import iris.bi.bi iris.bi.monpred.
 Require Import skylabs.iris.extra.proofmode.proofmode.
+Require Import skylabs.prelude.hint_label.
 
 (** * Observations *)
 (** We define type classes for making observations and a few instances
@@ -546,7 +547,6 @@ Motivation: framing [P] might make the goal unprovable, for instance in
 But after observing [observable P], framing [P] always preserves provability. *)
 mlock Definition observable {PROP : bi} (P : PROP) : PROP :=
   □ (∀ Q : PROP, [| Observe Q P |] -∗ Q).
-#[global] Arguments observable {_} _ : assert.
 #[global] Instance: Params (@observable) 1 := {}.
 
 Section observable_theory.
@@ -625,9 +625,19 @@ Section observable_theory.
     apply (anti_symm (⊢)); apply observable_mono, HE.
   Qed.
 
+  #[global] Instance frame_observable_observe_l p (P Q : PROP) :
+    Observe Q P ->
+    Frame p (observable P) Q emp.
+  Proof.
+    rewrite /Frame bi.intuitionistically_if_elim.
+    iIntros (HPQR) "[#O _]".
+    by iApply (observable_observe P Q with "O").
+  Qed.
+
 End observable_theory.
 
 #[global] Hint Resolve observe_intro_only_provable_simple : core.
 
+Definition hint_observe_match := tt.
 #[global] Hint Extern 100 (Observe (match ?s with _ => _ end) (match ?s with _ => _ end)) =>
-  destruct s : typeclass_instances.
+  hint_label hint_observe_match; destruct s : typeclass_instances.

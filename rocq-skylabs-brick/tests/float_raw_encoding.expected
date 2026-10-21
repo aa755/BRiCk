@@ -1,0 +1,33 @@
+File "./fmdeps/BRiCk/rocq-skylabs-brick/tests/float_raw_encoding.v", line 22, characters 49-56:
+The command has indeed failed with message:
+In environment
+σ : genv
+The term "eq_refl" has type
+ "float_type.supported float_type.Flongdouble =
+  float_type.supported float_type.Flongdouble"
+while it is expected to have type
+ "float_type.supported float_type.Flongdouble = true"
+(cannot unify "float_type.supported float_type.Flongdouble" and 
+"true").
+File "./fmdeps/BRiCk/rocq-skylabs-brick/tests/float_raw_encoding.v", line 24, characters 46-53:
+The command has indeed failed with message:
+In environment
+σ : genv
+The term "eq_refl" has type
+ "float_type.supported float_type.Flongdouble =
+  float_type.supported float_type.Flongdouble"
+while it is expected to have type
+ "float_type.supported float_type.Flongdouble = true"
+(cannot unify "float_type.supported float_type.Flongdouble" and 
+"true").
+File "./fmdeps/BRiCk/rocq-skylabs-brick/tests/float_raw_encoding.v", line 26, characters 49-56:
+The command has indeed failed with message:
+In environment
+σ : genv
+The term "eq_refl" has type
+ "float_type.supported float_type.Flongdouble =
+  float_type.supported float_type.Flongdouble"
+while it is expected to have type
+ "float_type.supported float_type.Flongdouble = true"
+(cannot unify "float_type.supported float_type.Flongdouble" and 
+"true").

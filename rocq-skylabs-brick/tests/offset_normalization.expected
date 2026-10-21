@@ -1,0 +1,4 @@
+File "./fmdeps/BRiCk/rocq-skylabs-brick/tests/offset_normalization.v", line 36, characters 11-57:
+The command has indeed failed with message:
+The reference skylabs.lang.cpp.model.inductive_pointers2.irr was not found
+in the current environment.

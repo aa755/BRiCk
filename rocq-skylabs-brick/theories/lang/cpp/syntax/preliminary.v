@@ -262,6 +262,17 @@ Module char_type.
     end.
   #[global] Arguments bytesN !_ /.
 
+  Definition bitsize (ct : t) : bitsize :=
+    match ct with
+    | Cchar | C8 => bitsize.W8
+    | C16 => bitsize.W16
+    | Cwchar | C32 => bitsize.W32
+    end.
+
+  Lemma bitsize_bytesN (ct : t) :
+    bitsize.bytesN (bitsize ct) = bytesN ct.
+  Proof. by destruct ct. Qed.
+
   Definition bitsN (ct : t) : N :=
     8 * bytesN ct.
   #[global] Arguments bitsN !_ /.
@@ -371,6 +382,14 @@ Module int_rank.
   (* [max] on the rank. *)
   Definition t_max (a b : t) : t :=
     if bool_decide (t_le a b) then b else a.
+
+  Lemma  bitsize_bitsN_of_int_rank rnk :
+    bitsize.bitsN (int_rank.bitsize rnk) = int_rank.bitsN rnk.
+  Proof. by case rnk. Qed.
+
+  Lemma  bitsize_bitsZ_of_int_rank rnk :
+    bitsize.bitsZ (int_rank.bitsize rnk) = int_rank.bitsZ rnk.
+  Proof. by case rnk. Qed.
 
   #[global] Notation max_val sz := (bitsize.max_val (bitsize sz)) (only parsing).
   #[global] Notation min_val sz := (bitsize.min_val (bitsize sz)) (only parsing).

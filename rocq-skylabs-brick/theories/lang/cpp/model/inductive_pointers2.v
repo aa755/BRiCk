@@ -15,11 +15,13 @@ Require Import Equations.Prop.Equations.
 
 Require Import stdpp.relations.
 Require Import stdpp.gmap.
+Require Import stdpp.proof_irrel.
 Require Import skylabs.prelude.base.
 Require Import skylabs.prelude.addr.
 Require Import skylabs.prelude.avl.
 Require Import skylabs.prelude.bytestring.
 Require Import skylabs.prelude.numbers.
+Require Import skylabs.prelude.axioms.funext.
 
 Require Import skylabs.lang.cpp.syntax.
 Require Import skylabs.lang.cpp.semantics.sub_module.
@@ -27,8 +29,6 @@ Require Import skylabs.lang.cpp.semantics.values.
 Require Import skylabs.lang.cpp.model.simple_pointers_utils.
 Require Import skylabs.lang.cpp.model.inductive_pointers_utils.
 Require Import skylabs.lang.cpp.semantics.ptrs.
-
-Axiom irr : ∀ (P : Prop) (p q : P), p = q.
 
 Implicit Types (σ : genv) (z : Z).
 #[local] Close Scope nat_scope.
@@ -145,7 +145,7 @@ Module PTRS_IMPL <: PTRS_INTF.
       roff_canon_syn [o]
   | SubCanon ty i o os :
       roff_canon_syn (o :: os) ->
-      ¬(∃ i' ty', o = o_sub_ ty' i') ->
+      ¬(∃ i', o = o_sub_ ty i') ->
       i ≠ 0 ->
       roff_canon_syn (o_sub_ ty i :: o :: os)
   | FieldCanon f os :
@@ -160,68 +160,64 @@ Module PTRS_IMPL <: PTRS_INTF.
       o ≠ o_base_ der base ->
       roff_canon_syn (o_derived_ base der :: o :: os).
 
-  Lemma canon_syn_sem_eqv :
-    ∀ os,
-      roff_canon os <-> roff_canon_syn os.
+  Definition no_prefix_step (os : raw_offset) : Prop :=
+    forall s t r, os = s ++ r -> roff_rw_local s t -> False.
+
+  Lemma roff_canon_cons o os :
+    roff_canon (o :: os) <-> no_prefix_step (o :: os) /\ roff_canon os.
   Proof.
-    rewrite /roff_canon /nf /red.
-    move=> os. split; move=> Hc.
-    {
-      admit.
-    }
-    {
-      induction Hc;
-      try (
-        remember (o :: os) as eos;
-        destruct Hc; subst
-      ); try done;
-      try inversion Heqeos;
-      subst.
-      { apply: nil_canon. }
-      { by apply: singleton_offset_canon. }
-      all:
-        move=> [y [l [r [s [t [Ho [Hl Hstep]]]]]]];
-        subst; destruct l; simpl in *; destruct Hstep;
-        simpl in *; inversion Ho; subst; try done;
-        try (
-          match goal with
-          | H : ¬∃ i ty, o_sub_ _ _ = o_sub_ ty i |- False =>
-            apply H
-          end;
-          try repeat eexists
-        );
-        try (
-          match goal with
-          | H : [?o] = ?l ++ ?r |- False =>
-            destruct l; simpl in *;
-            inversion H; subst;
-            destruct l; simpl in *;
-            inversion H
-          end
-        );
-        try (
-          match goal with
-          | H : [?o] = ?l ++ ?r |- False =>
-            destruct l; simpl in *;
-            inversion H; subst
-          end
-        );
-        try (
-          match goal with
-          | H : ¬∃ ty, o_sub_ _ 0 = o_sub_ ty 0 |- False =>
-              apply H; repeat eexists
-          end
-        );
-        try (
-          match goal with
-          | H : [] = ?l ++ ?r |- False =>
-              destruct l; simpl in *;
-              inversion H
-          end
-        ).
-        all: admit.
-    }
-  Admitted.
+    rewrite /roff_canon /nf /red /roff_rw_global /no_prefix_step.
+    split.
+    - intros H. split.
+      + intros s t r Heq Hstep. apply H.
+        exists (t ++ r), [], r, s, t. simpl. auto.
+      + intros [y [l [r [s [t [Heq [Hy Hstep]]]]]]]. apply H.
+        exists (o :: y), (o :: l), r, s, t. simpl. split; [by rewrite Heq|].
+        split; [by rewrite Hy|exact Hstep].
+    - intros [Hprefix Htail] [y [l [r [s [t [Heq [Hy Hstep]]]]]]].
+      destruct l as [|x l]; simpl in Heq.
+      + exact (Hprefix s t r Heq Hstep).
+      + inversion Heq; subst x. apply Htail.
+        exists (l ++ t ++ r), l, r, s, t. auto.
+  Qed.
+
+  Lemma canon_syn_sem os : roff_canon_syn os -> roff_canon os.
+  Proof.
+    intros H. induction H.
+    all: try solve [exact nil_canon | by apply singleton_offset_canon].
+    all: apply roff_canon_cons; split; last assumption.
+    all: rewrite /no_prefix_step; intros s t r Heq Hstep;
+      destruct Hstep; simpl in Heq; inversion Heq; subst; naive_solver.
+  Qed.
+
+  Lemma canon_sem_syn os : roff_canon os -> roff_canon_syn os.
+  Proof.
+    induction os as [|o os IH]; intros Hcanon; first exact NilCanon.
+    apply roff_canon_cons in Hcanon as [Hprefix Htail].
+    have Hsyn := IH Htail.
+    have Hzero : ~ (exists ty, o = o_sub_ ty 0%Z).
+    { intros [ty ->]. apply (Hprefix [o_sub_ ty 0%Z] [] os); [done|constructor]. }
+    destruct os as [|next rest]; first by apply SingCanon.
+    destruct o as [f|ty i|derived base|base derived].
+    - by apply FieldCanon.
+    - apply SubCanon; first exact Hsyn.
+      + intros [j Hnext]. subst next.
+        apply (Hprefix [o_sub_ ty i; o_sub_ ty j] [o_sub_ ty (i+j)%Z] rest);
+          [done|constructor].
+      + intros ->. apply Hzero. by exists ty.
+    - apply BaseCanon; first exact Hsyn.
+      intros ->. apply (Hprefix [o_base_ derived base; o_derived_ base derived] [] rest);
+        [done|constructor].
+    - apply DerCanon; first exact Hsyn.
+      intros ->. apply (Hprefix [o_derived_ base derived; o_base_ derived base] [] rest);
+        [done|constructor].
+  Qed.
+
+  Lemma canon_syn_sem_eqv os : roff_canon os <-> roff_canon_syn os.
+  Proof. split; [apply canon_sem_syn|apply canon_syn_sem]. Qed.
+
+  #[global] Instance roff_canon_proof_irrel os : ProofIrrel (roff_canon os).
+  Proof. exact: fun_pi. Qed.
 
   (** *** Offsets *)
   Definition offset := {o : raw_offset | roff_canon o}.
@@ -232,7 +228,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     {
       subst. left.
       f_equal.
-      apply: irr.
+      apply proof_irrel.
     }
     {
       right.
@@ -241,7 +237,6 @@ Module PTRS_IMPL <: PTRS_INTF.
       now apply proj1_sig_eq in H.
     }
   Qed.
-  #[global] Declare Instance offset_countable : Countable offset.
 
   Section norm_def.
 
@@ -273,7 +268,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     | o :: os =>
         '(l, r, s, t) ← find_redex os;
         Some (o :: l, r, s, t).
-    Admit Obligations.
+    Solve Obligations with (intros; simpl in *; lia).
 
     Ltac dex :=
       let H0 := fresh in
@@ -584,12 +579,298 @@ Module PTRS_IMPL <: PTRS_INTF.
       }
     Qed.
 
+    Lemma roff_rw_global_length os os' :
+      roff_rw_global os os' -> (length os' < length os)%nat.
+    Proof.
+      move=> [l [r [s [t [-> [-> H]]]]]].
+      repeat rewrite length_app.
+      destruct H; simpl; lia.
+    Qed.
+
+    Lemma find_redex_peak :
+      forall os l r s t os',
+        find_redex os = Some (l, r, s, t) ->
+        os = l ++ s ++ r ->
+        roff_rw_local s t ->
+        roff_rw_global os os' ->
+        l ++ t ++ r = os' \/
+        exists w,
+          roff_rw_global (l ++ t ++ r) w /\
+          roff_rw_global os' w.
+    Proof.
+      move=> os.
+      apply find_redex_ind.
+      { done. }
+      {
+        move=> ty xs l r s t ys Heq _ _ Hrw. inversion Heq; subst; clear Heq.
+        move: Hrw => [p [q [u [v [Hx [Hy Hr]]]]]]. subst ys.
+        destruct p as [|a p].
+        {
+          destruct Hr; simpl in Hx |- *; inversion Hx; subst; simpl.
+          { by left. }
+          { left. simpl. reflexivity. }
+        }
+        {
+          simpl in Hx |- *. inversion Hx; subst a r.
+          right. exists (p ++ v ++ q). split.
+          { by exists p, q, u, v. }
+          { exists [], (p ++ v ++ q), [o_sub_ ty 0], [].
+            repeat split; try done. constructor. }
+        }
+      }
+      {
+        move=> ty i1 i2 xs Hnz l r s t ys Heq _ _ Hrw.
+        inversion Heq; subst; clear Heq.
+        move: Hrw => [p [q [u [v [Hx [Hy Hr]]]]]]. subst ys.
+        destruct p as [|a p].
+        {
+          destruct Hr; simpl in Hx |- *; inversion Hx; subst; simpl.
+          { done. }
+          { by left. }
+        }
+        {
+          simpl in Hx |- *. inversion Hx; subst a.
+          destruct p as [|b p].
+          {
+            clear Hx. destruct Hr; simpl in H1 |- *; inversion H1; subst; simpl.
+            { left. f_equal. by rewrite Z.add_0_r. }
+            {
+              right. exists (o_sub_ ty0 ((i1 + n1) + n2) :: q). split.
+              {
+                exists [], q,
+                  [o_sub_ ty0 (i1 + n1); o_sub_ ty0 n2],
+                  [o_sub_ ty0 ((i1 + n1) + n2)].
+                repeat split; try done. constructor.
+              }
+              {
+                exists [], q,
+                  [o_sub_ ty0 i1; o_sub_ ty0 (n1 + n2)],
+                  [o_sub_ ty0 (i1 + (n1 + n2))].
+                split; [done|]. split; [|constructor].
+                simpl. by rewrite Z.add_assoc.
+              }
+            }
+          }
+          {
+            simpl in H1. inversion H1; subst b r.
+            right. exists (o_sub_ ty (i1 + i2) :: p ++ v ++ q). split.
+            { exists (o_sub_ ty (i1 + i2) :: p), q, u, v.
+              repeat split; try done. }
+            { exists [], (p ++ v ++ q),
+                [o_sub_ ty i1; o_sub_ ty i2],
+                [o_sub_ ty (i1 + i2)].
+              repeat split; try done. constructor. }
+          }
+        }
+      }
+      {
+        move=> der base xs l r s t ys Heq _ _ Hrw.
+        inversion Heq; subst; clear Heq.
+        move: Hrw => [p [q [u [v [Hx [Hy Hr]]]]]]. subst ys.
+        destruct p as [|a p].
+        {
+          destruct Hr; simpl in Hx |- *; inversion Hx; subst; by left.
+        }
+        {
+          simpl in Hx |- *. inversion Hx; subst a.
+          destruct p as [|b p].
+          {
+            clear Hx. destruct Hr; simpl in H1 |- *; inversion H1; subst; by left.
+          }
+          {
+            simpl in H1. inversion H1; subst b r.
+            right. exists (p ++ v ++ q). split.
+            { by exists p, q, u, v. }
+            { exists [], (p ++ v ++ q),
+                [o_base_ der base; o_derived_ base der], [].
+              repeat split; try done. constructor. }
+          }
+        }
+      }
+      {
+        move=> base der xs l r s t ys Heq _ _ Hrw.
+        inversion Heq; subst; clear Heq.
+        move: Hrw => [p [q [u [v [Hx [Hy Hr]]]]]]. subst ys.
+        destruct p as [|a p].
+        {
+          destruct Hr; simpl in Hx |- *; inversion Hx; subst; by left.
+        }
+        {
+          simpl in Hx |- *. inversion Hx; subst a.
+          destruct p as [|b p].
+          {
+            clear Hx. destruct Hr; simpl in H1 |- *; inversion H1; subst; by left.
+          }
+          {
+            simpl in H1. inversion H1; subst b r.
+            right. exists (p ++ v ++ q). split.
+            { by exists p, q, u, v. }
+            { exists [], (p ++ v ++ q),
+                [o_derived_ base der; o_base_ der base], [].
+              repeat split; try done. constructor. }
+          }
+        }
+      }
+      {
+        move=> o xs l r s t IH l' r' s' t' ys Heq E R Hrw.
+        inversion Heq; subst; clear Heq.
+        simpl in E. inversion E as [E0]. clear E.
+        move: Hrw => [p [q [u [v [Hx [Hy Hr]]]]]]. subst ys.
+        destruct p as [|a p].
+        2: {
+          simpl in Hx |- *. inversion Hx; subst a.
+          specialize (IH l r' s' t' (p ++ v ++ q) eq_refl E0 R).
+          assert (roff_rw_global xs (p ++ v ++ q)) as Htail.
+          { by exists p, q, u, v. }
+          specialize (IH Htail). destruct IH as [IH|[w [Hw1 Hw2]]].
+          { by left; f_equal. }
+          {
+            right. exists (o :: w). split.
+            {
+              move: Hw1 => [p1 [q1 [u1 [v1 [E1 [E2 R1]]]]]].
+              exists (o :: p1), q1, u1, v1. simpl.
+              rewrite E1 E2. done.
+            }
+            {
+              move: Hw2 => [p1 [q1 [u1 [v1 [E1 [E2 R1]]]]]].
+              exists (o :: p1), q1, u1, v1. simpl.
+              rewrite E1 E2. done.
+            }
+          }
+        }
+        simpl in Hx |- *.
+        destruct l as [|a l].
+        {
+          destruct R; destruct Hr; simpl in E0, Hx |- *;
+            inversion E0; inversion Hx; subst; simpl.
+          all: repeat match goal with
+            | H : _ :: _ = _ :: _ |- _ => inversion H; clear H; subst
+            end.
+          { by left. }
+          {
+            right. exists r'. split.
+            { exists [], r', [o_sub_ ty 0], [].
+              repeat split; try done. constructor. }
+            { exists [], r', [o_derived_ base der; o_base_ der base], [].
+              repeat split; try done. constructor. }
+          }
+          { by left. }
+          {
+            right. exists r'. split.
+            { exists [], r', [o_sub_ ty 0], [].
+              repeat split; try done. constructor. }
+            { exists [], r', [o_base_ der base; o_derived_ base der], [].
+              repeat split; try done. constructor. }
+          }
+          {
+            right. exists r'. split.
+            all: eexists [], r', [_], []; repeat split; try done; constructor.
+          }
+          { left. f_equal. by rewrite Z.add_0_r. }
+          {
+            right. exists (o_sub_ ty (n1 + n2) :: r'). split.
+            { exists [], (o_sub_ ty (n1 + n2) :: r'),
+                [o_sub_ ty0 0], [].
+              repeat split; try done. constructor. }
+            { exists [], r', [o_sub_ ty n1; o_sub_ ty n2],
+                [o_sub_ ty (n1+n2)].
+              repeat split; try done. constructor. }
+          }
+          {
+            right. exists (o_sub_ ty0 (n0 + (n3 + n2)) :: r'). split.
+            { exists [], r',
+                [o_sub_ ty0 n0; o_sub_ ty0 (n3+n2)],
+                [o_sub_ ty0 (n0+(n3+n2))].
+              repeat split; try done. constructor. }
+            { exists [], r',
+                [o_sub_ ty0 (n0+n3); o_sub_ ty0 n2],
+                [o_sub_ ty0 ((n0+n3)+n2)].
+              split; [done|]. split; [|constructor].
+              simpl. by rewrite Z.add_assoc. }
+          }
+        }
+        {
+          destruct Hr; simpl in Hx, E0 |- *; inversion E0; clear E0; subst xs;
+            repeat match goal with
+            | H : _ :: _ = _ :: _ |- _ => inversion H; clear H; subst
+            end; simpl.
+          {
+            right. exists (l ++ t' ++ r'). split.
+            { exists [], (l ++ t' ++ r'),
+                [o_derived_ base der; o_base_ der base], [].
+              repeat split; try done. constructor. }
+            { by exists l, r', s', t'. }
+          }
+          {
+            right. exists (l ++ t' ++ r'). split.
+            { exists [], (l ++ t' ++ r'),
+                [o_base_ der base; o_derived_ base der], [].
+              repeat split; try done. constructor. }
+            { by exists l, r', s', t'. }
+          }
+          {
+            right. exists (a :: l ++ t' ++ r'). split.
+            { exists [], (a :: l ++ t' ++ r'), [o_sub_ ty 0], [].
+              repeat split; try done. constructor. }
+            { by exists (a :: l), r', s', t'. }
+          }
+          {
+            right. exists (o_sub_ ty (n1+n2) :: l ++ t' ++ r'). split.
+            { exists [], (l ++ t' ++ r'),
+                [o_sub_ ty n1; o_sub_ ty n2], [o_sub_ ty (n1+n2)].
+              repeat split; try done. constructor. }
+            { by exists (o_sub_ ty (n1+n2) :: l), r', s', t'. }
+          }
+        }
+      }
+      { intros. discriminate. }
+    Qed.
+
+    Lemma normalize_global os os' :
+      roff_rw_global os os' -> normalize os = normalize os'.
+    Proof.
+      move=> Hrw.
+      remember (length os) as n eqn:Hn.
+      move: os os' Hn Hrw.
+      induction n using lt_wf_ind.
+      move=> os os' Hlen Hrw.
+      funelim (normalize os).
+      {
+        clear H0 H1 Heqcall.
+        pose proof (find_redex_pass _ _ _ _ _ H) as [E R].
+        assert (roff_rw_global os (l ++ t ++ r)) as Hsel.
+        { by exists l, r, s, t. }
+        pose proof (find_redex_peak os l r s t os' H E R Hrw) as Hp.
+        destruct Hp as [->|[w [Hw1 Hw2]]]; first done.
+        etrans.
+        {
+          apply (H2 (length (l ++ t ++ r))).
+          { by apply roff_rw_global_length in Hsel. }
+          { done. }
+          { exact Hw1. }
+        }
+        symmetry. apply (H2 (length os')).
+        { by apply roff_rw_global_length in Hrw. }
+        { done. }
+        { exact Hw2. }
+      }
+      {
+        clear H0 Heqcall H1.
+        exfalso. apply (find_redex_fail _ H).
+        move: Hrw => [l [r [s [t [E [_ R]]]]]].
+        by exists l, r, s, t.
+      }
+    Qed.
+
     Lemma norm_complete_aux :
       ∀ l r s t,
         roff_rw_local s t ->
         normalize (l ++ s ++ r) = normalize (l ++ t ++ r).
     Proof.
-    Admitted.
+      move=> l r s t H.
+      apply normalize_global.
+      by exists l, r, s, t.
+    Qed.
 
     Lemma norm_complete :
       ∀ os1 os2,
@@ -609,6 +890,16 @@ Module PTRS_IMPL <: PTRS_INTF.
     Qed.
 
   End norm_def.
+
+  #[global] Instance offset_countable : Countable offset.
+  Proof.
+    apply (inj_countable proj1_sig
+      (fun os => Some (exist roff_canon (normalize os) (norm_canon os)))).
+    intros [os Hcanon]. simpl.
+    generalize (norm_canon os).
+    rewrite (proj1 (norm_invol os) Hcanon).
+    intros Hcanon'. by rewrite (proof_irrel Hcanon' Hcanon).
+  Qed.
 
   Section norm_lemmas.
 
@@ -736,12 +1027,15 @@ Module PTRS_IMPL <: PTRS_INTF.
   | global_ptr_ (tu : translation_unit_canon) (o : obj_name)
   | fun_ptr_ (tu : translation_unit_canon) (o : obj_name)
   | alloc_ptr_ (a : alloc_id) (va : vaddr).
+  #[local] Instance root_ptr_eq_dec : EqDecision root_ptr.
+  Proof. solve_decision. Defined.
+
   Variant ptr_ : Set :=
   | invalid_ptr_
   | offset_ptr (p : root_ptr) (o : offset).
   Definition ptr := ptr_.
   #[global] Instance ptr_eq_dec : EqDecision ptr.
-  Admitted.
+  Proof. solve_decision. Defined.
   #[global] Instance ptr_countable : Countable ptr.
   Admitted.
 
@@ -764,16 +1058,6 @@ Module PTRS_IMPL <: PTRS_INTF.
 
   Include PTRS_SYNTAX_MIXIN.
 
-  Lemma sig_eq {A} {P : A -> Prop} :
-  ∀ (x y : A) (p : P x) (q : P y),
-    x = y ->
-    x ↾ p = y ↾ q.
-  Proof.
-    move=> x y p q H.
-    subst. f_equal.
-    apply: irr.
-  Qed.
-
   Program Definition o_id : offset :=
     [].
   Next Obligation.
@@ -787,7 +1071,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     UNFOLD_dot.
     move=> [o H].
     rewrite /o_id /__o_dot.
-    simpl. apply: sig_eq.
+    simpl. apply (sig_eq_pi roff_canon); simpl.
     by apply norm_invol.
   Qed.
 
@@ -796,7 +1080,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     UNFOLD_dot.
     move=> [o H].
     rewrite /o_id /__o_dot.
-    simpl. apply: sig_eq.
+    simpl. apply (sig_eq_pi roff_canon); simpl.
     rewrite app_nil_r.
     by apply norm_invol.
   Qed.
@@ -806,7 +1090,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     UNFOLD_dot.
     move=> [o1 H1] [o2 H2] [o3 H3].
     rewrite /o_id /__o_dot.
-    simpl. apply: sig_eq.
+    simpl. apply (sig_eq_pi roff_canon); simpl.
     by rewrite norm_absorb_l norm_absorb_r app_assoc.
   Qed.
 
@@ -817,7 +1101,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     move=> [| r [o H]]; UNFOLD_dot.
     { easy. }
     {
-      f_equal. apply: sig_eq.
+      f_equal. apply (sig_eq_pi roff_canon); simpl.
       rewrite app_nil_r.
       by apply norm_invol.
     }
@@ -831,7 +1115,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     { easy. }
     {
       move=> [o1 H1] [o2 H2].
-      simpl. f_equal. apply: sig_eq.
+      simpl. f_equal. apply (sig_eq_pi roff_canon); simpl.
       by rewrite norm_absorb_l norm_absorb_r app_assoc.
     }
   Qed.
@@ -936,7 +1220,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     move=> σ [| rp [o H]] base der _.
     { done. }
     {
-      f_equal. simpl. apply: sig_eq.
+      f_equal. simpl. apply (sig_eq_pi roff_canon); simpl.
       rewrite norm_absorb_r -app_assoc norm_rel.
       split.
       {
@@ -960,7 +1244,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     move=> σ [| rp [o H]] base der _.
     { done. }
     {
-      f_equal. simpl. apply: sig_eq.
+      f_equal. simpl. apply (sig_eq_pi roff_canon); simpl.
       rewrite norm_absorb_r -app_assoc norm_rel.
       split.
       {
@@ -982,7 +1266,7 @@ Module PTRS_IMPL <: PTRS_INTF.
     move=> σ i j ty.
     rewrite /__o_dot /o_sub /o_id.
     repeat case_match; subst;
-    try lia; apply sig_eq; simpl.
+    try lia; apply (sig_eq_pi roff_canon); simpl.
     { by simp normalize. }
     { simp normalize. by destruct j. }
     { simp normalize. by destruct i. }
@@ -1004,16 +1288,24 @@ Module PTRS_IMPL <: PTRS_INTF.
     }
   Qed.
 
+  Definition root_ptr_alloc_id (rp : root_ptr) : alloc_id :=
+    match rp with
+    | nullptr_ => null_alloc_id
+    | global_ptr_ tu o => global_ptr_encode_aid o
+    | fun_ptr_ tu o => global_ptr_encode_aid o
+    | alloc_ptr_ a _ => a
+    end.
+
   Definition ptr_alloc_id (p : ptr) : option alloc_id :=
     match p with
-    | offset_ptr (alloc_ptr_ a _) _ => Some a
-    | _ => None
+    | invalid_ptr_ => None
+    | offset_ptr rp _ => Some (root_ptr_alloc_id rp)
     end.
 
   Definition null_alloc_id : alloc_id := null_alloc_id.
   Lemma ptr_alloc_id_nullptr :
     ptr_alloc_id nullptr = Some null_alloc_id.
-  Admitted.
+  Proof. done. Qed.
 
   Lemma ptr_alloc_id_offset :
     ∀ p o,
@@ -1047,29 +1339,39 @@ Module PTRS_IMPL <: PTRS_INTF.
   Definition eval_offset (σ : genv) (os : offset) : option Z :=
     eval_offset_aux σ (`os).
 
-  Lemma eval_o_sub' :
-    ∀ σ (ty : type) (i : Z) (sz : N),
+  Lemma eval_o_sub' σ (ty : type) (i : Z) (sz : N) :
       size_of σ ty = Some sz ->
       eval_offset σ (o_sub σ ty i) = Some (sz * i).
   Proof.
     rewrite /eval_offset /o_sub.
-    move=> σ ty i n Hsome.
+    move=> Hsome.
     case_match; subst; simpl.
-    { f_equal. lia. }
+    { by rewrite right_absorb_L. }
     {
-      rewrite /o_sub_off Hsome /=.
-      f_equal. lia.
+      by rewrite /o_sub_off Hsome /= right_id_L comm_L.
     }
   Qed.
 
-  Lemma eval_o_field :
-  ∀ σ (f : name) (n : atomic_name) (cls : name) (st : Struct),
+  Lemma eval_o_field σ f n cls st :
     f = Field cls n ->
     glob_def σ cls = Some (Gstruct st) ->
     s_layout st = POD \/ s_layout st = Standard ->
     eval_offset σ (o_field σ f) = offset_of σ cls n.
   Proof.
-  Admitted.
+    intros -> _ _.
+    rewrite /eval_offset /o_field /= /eval_offset_seg /o_field_off.
+    destruct (offset_of σ cls n); simpl; [f_equal; lia|reflexivity].
+  Qed.
+
+  Lemma eval_o_base σ (cls base : globname) st :
+    glob_def σ cls = Some (Gstruct st) ->
+    st.(s_layout) = POD \/ st.(s_layout) = Standard ->
+    eval_offset σ (o_base σ cls base) = parent_offset σ cls base.
+  Proof.
+    intros _ _.
+    rewrite /eval_offset /o_base /= /o_base_off.
+    case: parent_offset => [off|//] /=. by rewrite right_id_L.
+  Qed.
 
   Lemma eval_offset_resp_norm :
     ∀ σ os,
@@ -1269,49 +1571,150 @@ Module PTRS_IMPL <: PTRS_INTF.
       end
     end.
 
-  Lemma ptr_vaddr_resp_leq :
-    ∀ σ1 σ2,
-      genv_leq σ1 σ2 ->
-      @ptr_vaddr σ1 = @ptr_vaddr σ2.
+  (** Environment extension preserves defined addresses. An offset whose type
+      was incomplete may become defined, so equality of the partial address
+      functions would be too strong. *)
+  Lemma eval_offset_seg_extension (s1 s2 : genv) o :
+    genv_leq s1 s2 -> Roption_leq eq (eval_offset_seg s1 o) (eval_offset_seg s2 o).
   Proof.
-    move=> σ1 σ2 H.
-    rewrite /ptr_vaddr.
-    extensionality p.
-    destruct p. easy.
-  Admitted.
+    intros Hle. destruct o as [f|ty i|derived base|base derived]; simpl.
+    - rewrite /o_field_off. destruct f => /=; try constructor;
+      exact (offset_of_extension _ _ _ _ Hle).
+    - rewrite /o_sub_off. have Hsize := Proper_size_of _ _ Hle ty ty eq_refl.
+      destruct Hsize; simpl; constructor; naive_solver.
+    - exact (parent_offset_extension _ _ _ _ Hle).
+    - apply (Roption_leq_eq_equiv (R:=eq)). intros z.
+      rewrite /o_derived_off. case E: (parent_offset s1 derived base) => [n|] //=.
+      rewrite ((proj1 (Roption_leq_eq_equiv (R:=eq)) (parent_offset_extension _ _ _ _ Hle)) _ E).
+      done.
+  Qed.
+
+  Lemma eval_offset_aux_extension (s1 s2 : genv) os :
+    genv_leq s1 s2 -> Roption_leq eq (eval_offset_aux s1 os) (eval_offset_aux s2 os).
+  Proof.
+    intros Hle. induction os as [|o os IH]; simpl; first by constructor.
+    apply (Roption_leq_eq_equiv (R:=eq)). intros z.
+    case E: (eval_offset_seg s1 o) => [n|] //=.
+    case F: (eval_offset_aux s1 os) => [m|] //=.
+    rewrite ((proj1 (Roption_leq_eq_equiv (R:=eq)) (eval_offset_seg_extension _ _ _ Hle)) _ E)
+      ((proj1 (Roption_leq_eq_equiv (R:=eq)) IH) _ F). done.
+  Qed.
+
+  Lemma ptr_vaddr_resp_leq (s1 s2 : genv) p :
+    genv_leq s1 s2 -> Roption_leq eq (@ptr_vaddr s1 p) (@ptr_vaddr s2 p).
+  Proof.
+    intros Hle. apply (Roption_leq_eq_equiv (R:=eq)). intros va.
+    destruct p as [|rp os]; simpl; first done.
+    rewrite /eval_offset. case E: (eval_offset_aux s1 (`os)) => [z|] //=.
+    rewrite ((proj1 (Roption_leq_eq_equiv (R:=eq)) (eval_offset_aux_extension _ _ _ Hle)) _ E).
+    done.
+  Qed.
 
   Lemma ptr_vaddr_nullptr :
     ∀ σ, @ptr_vaddr σ nullptr = Some 0%N.
   Proof.
-  Admitted.
+    intros σ.
+    rewrite /ptr_vaddr /nullptr /eval_offset /=.
+    reflexivity.
+  Qed.
+
+  Lemma eval_offset_snoc_sub_inv :
+    ∀ σ (o : offset) ty n sz z,
+      size_of σ ty = Some sz ->
+      eval_offset σ (o ,, o_sub σ ty n) = Some z ->
+      eval_offset σ o = Some (z - sz * n).
+  Proof.
+    move=> σ o ty n sz z Hsz Hz.
+    have Hneg : eval_offset σ (o_sub σ ty (-n)) = Some (sz * (-n)).
+    { by apply eval_o_sub'. }
+    have Hdot := eval_offset_dot σ (o ,, o_sub σ ty n)
+      (o_sub σ ty (-n)) z (sz * (-n)) Hz Hneg.
+    have Heq : (o ,, o_sub σ ty n) ,, o_sub σ ty (-n) = o.
+    {
+      rewrite -dot_assoc o_dot_sub.
+      replace (n + -n) with 0 by lia.
+      rewrite o_sub_0; last by eexists.
+      by apply dot_id.
+    }
+    rewrite Heq in Hdot.
+    replace (z - sz * n) with (z + sz * (-n)) by lia.
+    exact Hdot.
+  Qed.
 
   Lemma ptr_vaddr_o_sub_eq :
     ∀ σ p ty n1 n2 sz,
       size_of σ ty = Some sz -> (sz > 0)%N ->
       same_property (@ptr_vaddr σ) (p ,, o_sub σ ty n1) (p ,, o_sub σ ty n2) ->
       n1 = n2.
-  Admitted.
+  Proof.
+    move=> σ p ty n1 n2 sz Hsz Hpos.
+    rewrite same_property_iff.
+    move=> [addr [H1 H2]].
+    rewrite _dot.unlock/DOT_dot/= in H1 H2.
+    destruct p as [|rp o]; simpl in H1, H2; try done.
+    rewrite /ptr_vaddr in H1 H2.
+    match type of H1 with
+    | context [eval_offset σ ?x] => remember (eval_offset σ x) as e1 eqn:E1
+    end.
+    match type of H2 with
+    | context [eval_offset σ ?x] => remember (eval_offset σ x) as e2 eqn:E2
+    end.
+    match type of E1 with
+    | _ = eval_offset _ ?x =>
+        have O1 : x = o ,, o_sub σ ty n1 by
+          (UNFOLD_dot; apply (sig_eq_pi roff_canon); done);
+        rewrite O1 in E1
+    end.
+    match type of E2 with
+    | _ = eval_offset _ ?x =>
+        have O2 : x = o ,, o_sub σ ty n2 by
+          (UNFOLD_dot; apply (sig_eq_pi roff_canon); done);
+        rewrite O2 in E2
+    end.
+    destruct e1 as [z1|]; try discriminate.
+    destruct e2 as [z2|]; try discriminate.
+    have E1' : eval_offset σ (o ,, o_sub σ ty n1) = Some z1.
+    { rewrite -O1. exact (eq_sym E1). }
+    have E2' : eval_offset σ (o ,, o_sub σ ty n2) = Some z2.
+    { rewrite -O2. exact (eq_sym E2). }
+    have B1 := eval_offset_snoc_sub_inv σ o ty n1 sz z1 Hsz E1'.
+    have B2 := eval_offset_snoc_sub_inv σ o ty n2 sz z2 Hsz E2'.
+    rewrite B1 in B2. inversion B2 as [Hb].
+    destruct rp; destruct z1; destruct z2; simpl in H1, H2;
+      try discriminate; inversion H1; inversion H2; subst; nia.
+  Qed.
 
   Lemma global_ptr_nonnull_addr :
     ∀ σ tu o, @ptr_vaddr σ (global_ptr tu o) <> Some 0%N.
-  Admitted.
+  Proof.
+    intros σ tu o.
+    rewrite /ptr_vaddr /global_ptr /eval_offset /=.
+    intros Heq. inversion Heq as [Hzero].
+    exact (global_ptr_encode_vaddr_nonnull o _ eq_refl Hzero).
+  Qed.
 
   Lemma global_ptr_nonnull_aid :
     ∀ tu o,
       ptr_alloc_id (global_ptr tu o) <> Some null_alloc_id.
-  Admitted.
+  Proof. intros tu o [= H]. exact (global_ptr_encode_vaddr_nonnull o _ eq_refl H). Qed.
 
   Lemma global_ptr_inj :
     ∀ tu, Inj (=) (=) (global_ptr tu).
-  Admitted.
+  Proof. intros tu o1 o2 H. inversion H. reflexivity. Qed.
 
   Lemma global_ptr_addr_inj :
     ∀ σ tu, Inj (=) (=) (λ o, @ptr_vaddr σ (global_ptr tu o)).
-  Admitted.
+  Proof.
+    intros σ tu o1 o2 H.
+    rewrite /ptr_vaddr /global_ptr /eval_offset /= in H.
+    inversion H as [Heq].
+    apply (inj global_ptr_encode_vaddr).
+    exact Heq.
+  Qed.
 
   Lemma global_ptr_aid_inj :
     ∀ tu, Inj (=) (=) (λ o, ptr_alloc_id (global_ptr tu o)).
-  Admitted.
+  Proof. intros tu o1 o2 [= H]. exact: (inj global_ptr_encode_vaddr). Qed.
   #[global] Existing Instances global_ptr_inj global_ptr_addr_inj global_ptr_aid_inj.
 
   Include PTRS_DERIVED.

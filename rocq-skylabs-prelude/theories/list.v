@@ -124,55 +124,6 @@ Section take_while.
 
 End take_while.
 
-Section comparison.
-  Context {A} `{!Compare A}.
-
-  Definition compare_on {B} (f : B -> A) : Compare B :=
-    fun x y => base.compare (f x) (f y).
-
-End comparison.
-
-Module sorted.
-Section sorted.
-  Context {A} `{!Compare A}.
-
-  Definition compare_on {B} (f : B -> A) : Compare B :=
-    fun x y => base.compare (f x) (f y).
-
-  (** Remove duplicates from a sorted list *)
-  Definition nub (xs : list A) : list A :=
-    let fix go (x : option A) (xs : list A) : list A :=
-      match x, xs with
-      | None, [] => []
-      | None, x :: xs => go (Some x) xs
-      | Some x, [] => [x]
-      | Some x0, x1 :: xs =>
-          if bool_decide (base.compare.eq x0 x1) then
-            go (Some x0) xs
-          else
-            x0 :: go (Some x1) xs
-      end in
-    go None xs.
-
-  (** The intersection of two sorted lists *)
-  Fixpoint intersection (xs ys : list A) : list A :=
-    match xs with
-    | [] => []
-    | x :: xs =>
-        let ys' := drop_while (base.compare.gt x) ys in
-        match ys' with
-        | [] => []
-        | y :: ys'' =>
-            if bool_decide (base.compare.eq x y) then
-              x :: intersection xs ys''
-            else
-              intersection xs (y :: ys'')
-        end
-    end.
-
-End sorted.
-End sorted.
-
 (** ** Teach [set_solver] to reason about more list operations, similarly to set
 operations. *)
 
@@ -328,6 +279,13 @@ Section list.
     elim: xs => [//|x xs IH] /=.
     rewrite filter_cons Forall_cons.
     case_decide; naive_solver.
+  Qed.
+
+  Lemma list_filter_not_empty_iff xs `(∀ x, Decision (P x)) :
+    filter (λ x, ¬P x) xs = [] ↔ List.Forall P xs.
+  Proof.
+    rewrite list_filter_empty_iff. apply Forall_iff => x.
+    split; [apply dec_stable|tauto].
   Qed.
 
   (** List variant of

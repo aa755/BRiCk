@@ -410,14 +410,15 @@ Module SimpleCPP.
           | Vundef => pure_encodes_undef (int_rank.bitsize sz) vs
           | _ => False
           end
+        | Tvoid => v = Vvoid /\ vs = [Rundef]
         | Tchar_ ct => False (* TODO *)
         | Tmember_pointer _ _ =>
           match v with
           | Vint v =>
             (* note: this is really an offset *)
-            in_Z_to_bytes_bounds POINTER_BITSZ Unsigned v /\
-            vs = Z_to_bytes POINTER_BITSZ Unsigned v
-          | Vundef => pure_encodes_undef POINTER_BITSZ vs
+            in_Z_to_bytes_bounds (member_pointer_bitsize σ) Unsigned v /\
+            vs = Z_to_bytes (member_pointer_bitsize σ) Unsigned v
+          | Vundef => pure_encodes_undef (member_pointer_bitsize σ) vs
           | _ => False
           end
         | Tbool =>
@@ -457,7 +458,6 @@ Module SimpleCPP.
           end
         | Tenum _ => False (* << TODO: incorrect *)
         | Tqualified _ _ => False (* unreachable *)
-        | Tvoid
         | Tarray _ _
         | Tincomplete_array _
         | Tvariable_array _ _
@@ -478,18 +478,15 @@ Module SimpleCPP.
       #[local] Hint Resolve length_cptr : core.
       #[local] Hint Resolve length_pure_encodes_undef : core.
 
-      #[global] Instance encodes_nonvoid t v vs :
-        Observe [| t <> Tvoid |] (encodes t v vs).
-      Proof. apply: observe_intro_persistent; iIntros "!%". by destruct t. Qed.
-
       Lemma length_encodes t v vs :
         pure_encodes t v vs ->
           length vs = match erase_qualifiers t with
-                      | Tbool => 1
+                      | Tvoid | Tbool => 1
                       | Tnum sz _ => int_rank.bytesNat sz
                       | Tfloat_ ft => bitsize.bytesNat (float_type.bitsize ft)
 
-                      | Tmember_pointer _ _ | Tnullptr | Tptr _
+                      | Tmember_pointer _ _ => bitsize.bytesNat (member_pointer_bitsize σ)
+                      | Tnullptr | Tptr _
                       | Tfunction _ | Tref _ | Trv_ref _ =>
                                                  POINTER_BYTES
 
@@ -716,20 +713,17 @@ Module SimpleCPP.
         | Some a =>
           Exists vs,
           addr_encodes t q a v vs
-        | None => [| t <> Tvoid |] ** val_ p v q
+        | None => val_ p v q
         end.
 
     (* Needed by tptsto_cfractional *)
     #[local] Instance oaddr_encodes_fractional t oa p v :
       CFractional (λ q, oaddr_encodes t q oa p v).
-    Proof. rewrite /oaddr_encodes; destruct oa; apply _. Qed.
+    Proof. rewrite /oaddr_encodes. destruct oa; [apply _ | exact (val_cfractional p v)]. Qed.
 
-    #[local] Instance oaddr_encodes_nonvoid ty q oa p v :
-      Observe [| ty <> Tvoid |] (oaddr_encodes ty q oa p v).
-    Proof. destruct oa; apply _. Qed.
     #[local] Instance oaddr_encodes_cfrac_valid t :
       CFracValid3 (oaddr_encodes t).
-    Proof. constructor. intros ? oa ??. destruct oa; apply _. Qed.
+    Proof. constructor. intros ? oa ??. rewrite /oaddr_encodes. destruct oa; apply _. Qed.
 
     (** the pointer points to the code
 
@@ -892,8 +886,9 @@ Module SimpleCPP.
       strict_valid_ptr p ** derivation_own p q this most_derived.
 
     Instance mdc_path_cfractional this mdc : CFractional1 (mdc_path this mdc) := _.
-    Axiom mdc_path_cfrac_valid : forall cls path,
+    Lemma mdc_path_cfrac_valid : forall cls path,
       CFracValid1 (mdc_path cls path).
+    Proof. intros cls path. solve_cfrac_valid. Qed.
     Instance mdc_path_timeless this mdc q p : Timeless (mdc_path this mdc q p) := _.
     Instance mdc_path_strict_valid this mdc q p : Observe (strict_valid_ptr p) (mdc_path this mdc q p).
     Proof. refine _. Qed.
@@ -953,9 +948,6 @@ Module SimpleCPP.
     #[global] Instance tptsto_timeless ty q p v :
       Timeless (tptsto ty q p v) := _.
 
-    #[global] Instance tptsto_nonvoid ty (q : cQp.t) p v :
-      Observe [| ty <> Tvoid |] (tptsto ty q p v) := _.
-
     #[global] Instance tptsto_cfrac_valid ty :
       CFracValid2 (tptsto ty).
     Proof. solve_cfrac_valid. Qed.
@@ -1003,7 +995,7 @@ Module SimpleCPP.
     Axiom offset_inv_pinned_ptr_pure : forall σ o z va p,
       eval_offset σ o = Some z ->
       pinned_ptr_pure va (p ,, o) ->
-      valid_ptr (p ,, o) |--
+      valid_ptr p |--
       [| 0 <= Z.of_N va - z |]%Z **
       [| pinned_ptr_pure (Z.to_N (Z.of_N va - z)) p |].
 
@@ -1290,7 +1282,17 @@ Module SimpleCPP.
     (* TODO: the [Notation] connects to the wrong definition *)
     #[local] Theorem tptsto_reference_to : forall p ty q (v : val),
       Observe (reference_to ty p) (tptsto ty q p v).
-    Proof. Admitted.
+    Proof.
+      intros. apply: observe_intro_persistent.
+      iIntros "H".
+      iDestruct (observe (type_ptr ty p) with "H") as
+        "(%Hnn & %Hal & _ & #Hs & _)".
+      rewrite /reference_to.
+      iFrame (Hnn Hal).
+      iSplit.
+      { by iApply strict_valid_valid. }
+      case_match; done.
+    Qed.
 
   End with_cpp.
 
@@ -1369,10 +1371,22 @@ Module VALID_PTR : VALID_PTR_AXIOMS PTRS_IMPL VALUES_DEFS_IMPL L L.
 
     Note that `arrR` exposes stronger reasoning principles, but this might still be useful.
     *)
-    Axiom strict_valid_ptr_sub : ∀ (i j k : Z) p ty vt1 vt2,
+    Axiom _valid_ptr_sub : ∀ (i j k : Z) p ty vt1 vt2 vt,
       (i <= j < k)%Z ->
+      (vt = Strict -> exists sz, size_of σ ty = Some sz /\ (0 < sz)%N) ->
+      _valid_ptr vt1 (p ,, o_sub σ ty i) |--
+      _valid_ptr vt2 (p ,, o_sub σ ty k) -* _valid_ptr vt (p ,, o_sub σ ty j).
+
+    Lemma strict_valid_ptr_sub : ∀ (i j k : Z) p ty vt1 vt2,
+      (i <= j < k)%Z ->
+      (exists sz, size_of σ ty = Some sz /\ (0 < sz)%N) ->
       _valid_ptr vt1 (p ,, o_sub σ ty i) |--
       _valid_ptr vt2 (p ,, o_sub σ ty k) -* strict_valid_ptr (p ,, o_sub σ ty j).
+    Proof.
+      intros i j k p ty vt1 vt2 Hijk Hsize.
+      apply (_valid_ptr_sub i j k p ty vt1 vt2 Strict Hijk).
+      intros _. exact Hsize.
+    Qed.
 
     (** XXX: this axiom is convoluted but
     TODO: The intended proof of [strict_valid_ptr_field_sub] (and friends) is that
@@ -1404,6 +1418,7 @@ Module VALID_PTR : VALID_PTR_AXIOMS PTRS_IMPL VALUES_DEFS_IMPL L L.
 
     Axiom type_ptr_o_base : forall derived base p,
       class_derives derived [base] ->
+      base_layout_compatible σ derived base ->
       type_ptr (Tnamed derived) p ⊢ type_ptr (Tnamed base) (p ,, _base derived base).
 
     Axiom type_ptr_o_field_type_ptr : forall p fld cls (st : Struct),
