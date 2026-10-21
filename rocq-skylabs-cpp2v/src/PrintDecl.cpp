@@ -422,7 +422,12 @@ static Expr *fieldInitializer(const FieldDecl &field, ClangPrinter &cprint) {
                       !isa<CXXBoolLiteralExpr>(expr->IgnoreParens())))
             return nullptr;
         auto converted = cprint.getCompiler().getSema().PerformImplicitConversion(
-            expr, field.getType(), Sema::AA_Initializing);
+            expr, field.getType(),
+#if CLANG_VERSION_MAJOR >= 20
+            AssignmentAction::Initializing);
+#else
+            Sema::AA_Initializing);
+#endif
         return converted.isInvalid() ? nullptr : converted.get();
     }
     return nullptr;
