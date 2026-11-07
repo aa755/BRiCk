@@ -52,12 +52,12 @@ This assumes that [dune](https://github.com/ocaml/dune) is available.
 ### After building with the `Makefile`
 
 Given a C++ source file `CPP_SOURCE`, and a set of compiler flags `FLAGS`, the
-following command produces files `NAMES_FILE` and `AST_FILE`.
+following command produces file `AST_FILE`.
 ```sh
-./build/cpp2v -v -names ${NAMES_FILE} -o ${AST_FILE} ${CPP_SOURCE} -- ${FLAGS}
+./build/cpp2v -v -o ${AST_FILE} ${CPP_SOURCE} -- ${FLAGS}
 ```
 For a `CPP_SOURCE` named `file.cpp`, a convention that is often followed is
-to define `AST_FILE` as `file_cpp.v`, and `NAMES_FILE` as `file_cpp_names.v`.
+to define `AST_FILE` as `file_cpp.v`.
 
 ### After building with `dune`
 
@@ -66,6 +66,14 @@ arguments `ARGS`.
 ```
 dune exec -- cpp2v ${ARGS}
 ```
+
+## Shared host/Docker execution
+
+The package also installs `cpp2v-run` and `cpp2v-toolchain` for running commands
+and generating command adapters against a common host/container environment.
+They support explicit TU translation, compilation, and executable tests. Inline
+`cpp.prog` translation remains host-only. Docker is opt-in; image choices and
+forwarded environment variables remain consumer configuration. See [scripts/README.md](scripts/README.md).
 
 ## Directory layout
 
